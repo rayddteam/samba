@@ -73,6 +73,7 @@ def options(opt):
 
     opt.samba_add_onoff_option('glusterfs', with_name="enable", without_name="disable", default=True)
     opt.samba_add_onoff_option('cephfs', with_name="enable", without_name="disable", default=True)
+    opt.samba_add_onoff_option('edgefs', with_name="enable", without_name="disable", default=False)
 
     opt.add_option('--enable-vxfs',
                   help=("enable support for VxFS (default=no)"),
@@ -1595,6 +1596,9 @@ main() {
         conf.SET_TARGET_TYPE('gfapi', 'EMPTY')
         conf.undefine('HAVE_GLUSTERFS')
 
+    if Options.options.with_edgefs:
+        conf.DEFINE('HAVE_EDGEFS', '1')
+
     if Options.options.enable_vxfs:
         conf.DEFINE('HAVE_VXFS', '1')
 
@@ -1772,6 +1776,9 @@ main() {
 
     if conf.CONFIG_SET('HAVE_GLUSTERFS'):
         default_shared_modules.extend(TO_LIST('vfs_glusterfs'))
+
+    if conf.CONFIG_SET('HAVE_EDGEFS'):
+        default_shared_modules.extend(TO_LIST('vfs_edgefs'))
 
     if conf.CONFIG_SET('HAVE_SETMNTENT'):
         default_shared_modules.extend(TO_LIST('vfs_glusterfs_fuse'))
