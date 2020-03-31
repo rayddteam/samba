@@ -1597,7 +1597,11 @@ main() {
         conf.undefine('HAVE_GLUSTERFS')
 
     if Options.options.with_edgefs:
+        Logs.info("building with EDGEFS")
         conf.DEFINE('HAVE_EDGEFS', '1')
+        conf.CHECK_HEADERS('ccowfsio.h', lib='ccowfsio')
+        conf.CHECK_LIB('ccowfsio', shlib=True)
+        Logs.info(">>> building with EDGEFS")
 
     if Options.options.enable_vxfs:
         conf.DEFINE('HAVE_VXFS', '1')
