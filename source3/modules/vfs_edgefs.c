@@ -83,6 +83,83 @@ struct vfs_edgefs_dir {
 };
 
 static int
+ifDot(char *s, int p1, int p2)
+{
+
+	if (p1 == -1)
+		return (0);
+	if (p2 == -1)
+		return (0);
+	if ((p2 - p1) != 2)
+		return (0);
+	if (s[p1+1] == '.')
+		return (1);
+	return (0);
+}
+
+static int
+ifDotDot(char *s, int p1, int p2)
+{
+
+	if (p1 == -1)
+		return (0);
+	if (p2 == -1)
+		return (0);
+	if ((p2 - p1) != 3)
+		return (0);
+	if ((s[p1+1] == '.') && (s[p1+2] == '.'))
+		return (1);
+	return (0);
+}
+
+#define	xSTRCPY(dst, src) memmove((dst), (src), strlen((src)) + 1);
+
+static int
+normalize_path(char *n)
+{
+	int i, sl[3];
+
+	/* Strip extra slashes. */
+	for (i = 1; i < strlen(n); i++) {
+		if (n[i - 1] == '/' && n[i] == '/') {
+			xSTRCPY(&n[i], &n[i + 1]);
+			i--;
+		}
+	}
+	if (strcmp(n, "/..") == 0)
+		return (-1);
+
+	/* Strip double dot with its parent. */
+reset:
+	sl[0] = sl[1] = sl[2] = -1;
+	for (i = 0; i < strlen(n); i++) {
+		if (n[i] != '/')
+			continue;
+		sl[0] = sl[1];
+		sl[1] = sl[2];
+		sl[2] = i;
+		if (ifDot(n, sl[1], sl[2])) {
+			xSTRCPY(&n[sl[1]+1], &n[sl[2]+1]);
+			goto reset;
+		}
+		if (sl[0] != -1 && ifDotDot(n, sl[1], sl[2])) {
+			xSTRCPY(&n[sl[0]+1], &n[sl[2]+1]);
+			goto reset;
+		}
+	}
+
+	if (sl[2] != -1 && ifDot(n, sl[2], strlen(n))) {
+		xSTRCPY(&n[sl[2]], &n[strlen(n)]);
+	} else if (sl[0] != -1 && ifDotDot(n, sl[2], strlen(n))) {
+		xSTRCPY(&n[sl[1]], &n[strlen(n)]);
+	}
+	if (strlen(n) > 0 && n[strlen(n) - 1] == '/')
+		n[strlen(n) - 1] = '\0';
+
+	return (0);
+}
+
+static int
 vfs_edgefs_smb_fname2inode(struct vfs_handle_struct *handle,
     struct smb_filename *smb_fname, inode_t *inode)
 {
@@ -91,6 +168,7 @@ vfs_edgefs_smb_fname2inode(struct vfs_handle_struct *handle,
 	int i, l, ret = 0;
 
 	name = smb_fname->base_name;
+	DBG_ERR("############@@@@@@2 file \"%s\", l=%d\n", name, l);
 	if (name[0] == '/') {
 		path = strdup(name); // XXX Allocator
 		if (path == NULL)
@@ -100,6 +178,7 @@ vfs_edgefs_smb_fname2inode(struct vfs_handle_struct *handle,
 		if (ret == -1)
 			return (errno);
 	}
+#if 0
 	l = strlen(path);
 	if (l > 2) {
 		if (strcmp(&path[l-3], "/..") == 0) {
@@ -113,12 +192,21 @@ vfs_edgefs_smb_fname2inode(struct vfs_handle_struct *handle,
 		}
 	}
 	l = strlen(path);
+	DBG_ERR("############ file \"%s\", l=%d\n", path, l);
 	if (l > 0 && path[l - 1] == '.')
 		path[l - 1] = '\0';
+#else
+	if (normalize_path(path) != 0) {
+		DBG_ERR("file path error \"%s\".\n", path);
+		errno = EINVAL;
+		goto fail;
+	}
+#endif
+	DBG_ERR("############++++ file \"%s\"\n", path);
 	name = path;
 
 	if (strstr(name, handle->conn->connectpath) != name) {
-		DBG_ERR("Not VFS file \"%s\"", name);
+		DBG_ERR("Not a VFS file \"%s\"\n", name);
 		ret = EINVAL;
 		goto fail;
 	} else {
@@ -588,13 +676,9 @@ DBG_INFO("%s:%d\n", __func__, __LINE__);
 	ret = 0;
 	START_PROFILE(syscall_closedir);
 	dir = (struct vfs_edgefs_dir *)dirp;
-DBG_INFO("%d dir=%p\n", __LINE__, dir);
 DBG_INFO("%d dir inode=%lu\n", __LINE__, dir->dir_ino);
 DBG_INFO("%d cnt=%d\n", __LINE__, dir->dirents_cnt);
 	for (i = 0; i < dir->dirents_cnt; i++) {
-		// XXX double free. why?
-		DBG_INFO("ent[%d]\n", i);
-		DBG_INFO("ent[%d] dirents @%p\n", i, &dir->dirents[i]);
 		DBG_INFO("ent[%d].name @%p\n", i, &dir->dirents[i].name);
 		if (dir->dirents[i].name == NULL)
 			continue;
@@ -606,13 +690,9 @@ DBG_INFO("%d cnt=%d\n", __LINE__, dir->dirents_cnt);
 DBG_INFO("%d Free current dirent.\n", __LINE__);
 		//TALLOC_FREE(dir->dirent);
 		dir->dirent = NULL;
-DBG_INFO("%d\n", __LINE__);
 	}
-DBG_INFO("%d\n", __LINE__);
 	SAFE_FREE(dir);
-DBG_INFO("%d\n", __LINE__);
 	END_PROFILE(syscall_closedir);
-DBG_INFO("%d\n", __LINE__);
 
 	return ret;
 }
@@ -626,11 +706,12 @@ edgefs_readdir_cb4(inode_t parent, fsio_dir_entry *de, uint64_t p, void *ptr)
 
 	dir = (struct vfs_edgefs_dir *)ptr;
 	for (i = 0; i < p; i++) {
-		n == strdup(de[i].name);
+		n = strdup(de[i].name);
 		if (n == NULL)
 			return (errno);
 		dir->dirents[dir->dirents_cnt].name = n;
 		dir->dirents[dir->dirents_cnt].inode = de[i].inode;
+		DBG_INFO("%d %s ==> %lu #%d.\n", __LINE__, n, de[i].inode, dir->dirents_cnt);
 		dir->dirents_cnt++;
 		if (dir->dirents_cnt >= CCOW_FSIO_DIRENT_PREFETCH)
 			return (1);
@@ -668,8 +749,8 @@ vfs_edgefs_readdir(struct vfs_handle_struct *handle, DIR *dirp,
 		DBG_INFO(":%d Cleanup before fetch next portion.\n", __LINE__);
 		n = (dir->dirents_cnt > 0)?
 		    strdup(dir->dirents[dir->dirents_cnt - 1].name):"";
-//		if (n == NULL)
-//			return (errno);
+		if (n == NULL)
+			return (errno);
 
 		/* Free names allocated by strdup.  */
 		for (i = 0; i < dir->dirents_cnt; i++) {
@@ -806,10 +887,16 @@ DBG_INFO("%s:%d\n", __func__, __LINE__);
 	tmp.base_name = parent_path;
 	ret = vfs_edgefs_smb_fname2inode(handle, &tmp, &parent);
 	if (ret != 0) {
+		DBG_ERR("Can't find parent dir \"%s\". error=%d\n",
+		    parent_path, ret);
 		goto fail;
 	}
 	ret = ccow_fsio_mkdir(HANDLE_CI(handle), parent, name, mode, uid, gid,
 	    NULL);
+	if (ret != 0) {
+		DBG_ERR("Can't create dir \"%s/%s\". error=%d\n", parent_path,
+		    name, ret);
+	}
 fail:
 	TALLOC_FREE(frame);
 	END_PROFILE(syscall_mkdir);
@@ -1287,7 +1374,6 @@ vfs_edgefs_pwrite(struct vfs_handle_struct *handle,
 		return -1;
 	}
 
-	//     ret = edgefs_pwrite(file, data, n, offset, 0);
 	ret = ccow_fsio_write(file, offset, n, (void *)data, &wrote);
 	if (ret == 0) {
 		ret = wrote;
